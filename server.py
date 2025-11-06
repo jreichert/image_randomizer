@@ -23,25 +23,33 @@ ENABLE_PHOTO_CACHE = os.getenv("ENABLE_PHOTO_CACHE", "").lower() in {"1", "true"
 cache_lock = threading.Lock()
 photo_cache: Dict[Tuple[str, FrozenSet[Tuple[str, Any]]], Tuple[bytes, str]] = {}
 
-# Provider configurations
-PROVIDER_CONFIGS = {
-    'unsplash': {
-        'api_url': 'https://api.unsplash.com/photos/random',
-        'headers': {
-            'Authorization': f'Client-ID {os.getenv("UNSPLASH_ACCESS_KEY")}'
+
+def _get_provider_configs() -> dict[str, dict]:
+    return {
+        'unsplash': {
+            'api_url': 'https://api.unsplash.com/photos/random',
+            'headers': {
+                'Authorization': f'Client-ID {os.getenv("UNSPLASH_ACCESS_KEY")}'
+            },
+            'body_params': {
+                'orientation': 'landscape',
+                'w': 1920,
+                'h': 1080
+            },
+            'pre': _unsplash_pre,
+            'post': _unsplash_post
         },
-        'body_params': {
-            'orientation': 'landscape',
-            'w': '1920',
-            'h': '1080'
+        'lorem_picsum': {
+            'api_url': 'https://picsum.photos/1920/1080',
+            'headers': {},
+            'body_params': {
+                'w': 1920,
+                'h': 1080
+            },
+            'pre': _lorem_picsum_pre,
+            'post': _lorem_picsum_post
         }
-    },
-    'lorem_picsum': {
-        'api_url': 'https://picsum.photos/1920/1080',
-        'headers': {},
-        'body_params': {}
     }
-}
 
 
 def _build_request_params(provider_cfg: dict, overrides: dict) -> dict:
@@ -62,7 +70,94 @@ def _build_request_params(provider_cfg: dict, overrides: dict) -> dict:
     return params
 
 
+def build_picsum_url(width: int = 1920, height: int = 1080,
+                     grayscale: bool = False, blur: int | None = None, webp: bool = False) -> str:
+    """
+    Build a Lorem Picsum image URL with optional width, height, grayscale, blur, and webp format.
+    """
+    ext = ".webp" if webp else ""
+    url = f"https://picsum.photos/{width}/{height}{ext}"
+
+    query_parts = []
+    if grayscale:
+        query_parts.append("grayscale")
+    if blur:
+        query_parts.append(f"blur={blur}")
+
+    if query_parts:
+        url += "?" + "&".join(query_parts)
+
+    return url
+
+
+# ---- Unsplash ----
+def _unsplash_pre(url: str, params: dict) -> tuple[str, dict]:
+    """No-op for Unsplash pre-processing."""
+    return url, params
+
+
+def _unsplash_post(resp: requests.Response, params: dict) -> tuple[bytes, str]:
+    """Extract the photo URL from Unsplash JSON and fetch its bytes."""
+    photo_url = resp.json()['urls']['full']
+    img_resp = requests.get(photo_url, timeout=10)
+    img_resp.raise_for_status()
+    return img_resp.content, img_resp.headers.get("Content-Type", "image/jpeg")
+
+
+# ---- Lorem Picsum ----
+def _lorem_picsum_pre(url: str, params: dict) -> tuple[str, dict]:
+    """
+    Build Picsum URL path and a brand-new query-params dict.
+
+    - width/height -> path (defaults 1920x1080)
+    - webp -> path suffix if present
+    - grayscale -> presence-only flag added to query ('' value)
+    - blur -> presence or numeric value added to query ('' if no value)
+    - NO other keys from the input params are copied into the output
+    """
+    # read-only access to the input
+    w = params.get("w", 1920)
+    h = params.get("h", 1080)
+    ext = ".webp" if "webp" in params else ""
+    grayscale_present = "grayscale" in params
+    blur_present = "blur" in params
+    blur_val = params.get("blur")  # may be '', '3', or None
+
+    final_url = f"https://picsum.photos/{w}/{h}{ext}"
+
+    # build a brand-new output dict — do NOT reuse or re-insert unrelated input keys
+    query_params: dict = {}
+    if grayscale_present:
+        query_params["grayscale"] = ""           # ?grayscale
+    if blur_present:
+        query_params["blur"] = blur_val or ""    # ?blur  or ?blur=3
+
+    logger.info("Picsum URL: %s  params: %s", final_url, query_params)
+    return final_url, query_params
+
+
+def _lorem_picsum_post(resp: requests.Response, params: dict) -> tuple[bytes, str]:
+    """No-op post-processing for Picsum."""
+    return resp.content, resp.headers.get("Content-Type", "image/jpeg")
+
+
 def _fetch_from_provider(provider_cfg: dict, params: dict) -> tuple[bytes, str]:
+    """Fetch a photo from any provider using pre- and post-processing hooks."""
+    pre_fn = provider_cfg.get("pre", lambda url, p: (url, p))
+    post_fn = provider_cfg.get("post", lambda resp, _: (resp.content, resp.headers.get("Content-Type", "image/jpeg")))
+
+    # Pre-processing
+    url, processed_params = pre_fn(provider_cfg["api_url"], params.copy())
+
+    # Request
+    resp = requests.get(url, headers=provider_cfg.get("headers"), params=processed_params, timeout=10)
+    resp.raise_for_status()
+
+    # Post-processing
+    return post_fn(resp, processed_params)
+
+
+def _fetch_from_provider_old(provider_cfg: dict, params: dict) -> tuple[bytes, str]:
     """Perform a network request to a photo provider.
 
     Args:
@@ -141,12 +236,15 @@ def fetch_photo(provider: str, **overrides) -> tuple[bytes, str]:
         ValueError: If the provider is unknown.
         RuntimeError: If fetching the photo from the provider fails.
     """
-    provider_cfg = PROVIDER_CONFIGS.get(provider)
+    provider_cfg = _get_provider_configs().get(provider)
+    logger.debug(f"Provider config for '{provider}': {provider_cfg}")
     if not provider_cfg:
         raise ValueError(f"Unknown provider: {provider}")
 
+    logger.debug(f"Fetching photo from provider '{provider}' with overrides: {overrides}")
     params = _build_request_params(provider_cfg, overrides)
 
+    logger.debug(f"Built request params for provider '{provider}': {params}")
     cached = _get_from_cache(provider, overrides)
     if cached:
         logger.info(f"Cache hit for {provider} {overrides}")
@@ -197,6 +295,7 @@ def picture(provider):
         500: Unexpected internal error.
     """
     overrides = request.args.to_dict()
+    logger.info(f"Received request for provider '{provider}' with overrides: {overrides}")
     try:
         photo_data, mime_type = fetch_photo(provider, **overrides)
         return Response(photo_data, mimetype=mime_type)
