@@ -1,4 +1,3 @@
-````markdown
 # Flask Wallpaper API
 
 A simple Flask API that serves random wallpapers from multiple providers (Unsplash and Lorem Picsum). This can be useful for applications
@@ -118,4 +117,3 @@ with a blur level of 3.
 ## 📝 License
 
 MIT License
-````
