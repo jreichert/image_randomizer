@@ -33,8 +33,8 @@ def _get_provider_configs() -> dict[str, dict]:
             },
             'body_params': {
                 'orientation': 'landscape',
-                'w': 1920,
-                'h': 1080
+                'width': 1920,
+                'height': 1080
             },
             'pre': _unsplash_pre,
             'post': _unsplash_post
@@ -297,6 +297,8 @@ def picture(provider):
     overrides = request.args.to_dict()
     logger.info(f"Received request for provider '{provider}' with overrides: {overrides}")
     try:
+        if provider == 'unsplash' and not os.getenv("UNSPLASH_ACCESS_KEY"):
+            raise ValueError("Unsplash provider requires UNISPLASH_ACCESS_KEY environment variable.")
         photo_data, mime_type = fetch_photo(provider, **overrides)
         return Response(photo_data, mimetype=mime_type)
     except ValueError as ve:
