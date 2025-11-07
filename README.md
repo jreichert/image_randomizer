@@ -19,7 +19,7 @@ docker build -t wallpaper-api .
 
 # Run the container (with optional environment variables)
 docker run -p 7078:7078 \
-    -e ENABLE_PHOTO_CACHE=True \
+    -e ENABLE_CACHE=True \
     -e UNSPLASH_ACCESS_KEY=your_unsplash_key \
     wallpaper-api
 ```
@@ -38,7 +38,7 @@ pip install -r requirements.txt
 
 # Set environment variables and run
 export FLASK_APP=server.py
-export ENABLE_PHOTO_CACHE=True
+export ENABLE_CACHE=True
 export UNSPLASH_ACCESS_KEY=your_unsplash_key
 flask run
 ```
@@ -52,7 +52,7 @@ Environment variables can also be added to a .env file in the project root.
 | Variable              | Description                   | Required               | Default |
 | --------------------- | ----------------------------- | ---------------------- | ------- |
 | `UNSPLASH_ACCESS_KEY` | API key for Unsplash provider | Only if using Unsplash | None    |
-| `ENABLE_PHOTO_CACHE`  | Toggle caching of images      | No                     | `False` |
+| `ENABLE_CACHE`        | Toggle caching of images      | No                     | `False` |
 
 ---
 

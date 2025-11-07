@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global cache toggle
-ENABLE_PHOTO_CACHE = os.getenv("ENABLE_PHOTO_CACHE", "").lower() in {"1", "true", "yes"}
+ENABLE_CACHE = os.getenv("ENABLE_CACHE", "").lower() in {"1", "true", "yes"}
 
 # Global cache + lock
 cache_lock = threading.Lock()
@@ -157,37 +157,6 @@ def _fetch_from_provider(provider_cfg: dict, params: dict) -> tuple[bytes, str]:
     return post_fn(resp, processed_params)
 
 
-def _fetch_from_provider_old(provider_cfg: dict, params: dict) -> tuple[bytes, str]:
-    """Perform a network request to a photo provider.
-
-    Args:
-        provider_cfg (dict): Provider configuration dictionary.
-        params (dict): Request parameters to pass to the API.
-
-    Returns:
-        tuple[bytes, str]: Tuple of (photo_binary_data, photo_mime_type).
-
-    Raises:
-        requests.RequestException: If the HTTP request fails.
-    """
-    response = requests.get(
-        provider_cfg['api_url'],
-        headers=provider_cfg['headers'],
-        params=params,
-        timeout=10
-    )
-    response.raise_for_status()
-    # photo_data = response.content
-    photo_data = response.json()
-    photo_url = photo_data['urls']['full']
-    img_resp = requests.get(photo_url)
-    img_resp.raise_for_status()
-    photo_bytes = img_resp.content
-    mime_type = img_resp.headers.get('Content-Type', 'image/jpeg')
-    logger.info(f"Fetched photo: {len(photo_bytes)} bytes, MIME type: {mime_type}")
-    return photo_bytes, mime_type
-
-
 def _get_from_cache(provider: str, overrides: dict) -> tuple[bytes, str] | None:
     """Retrieve a cached photo if available.
 
@@ -199,9 +168,11 @@ def _get_from_cache(provider: str, overrides: dict) -> tuple[bytes, str] | None:
         tuple[bytes, str] | None: Cached (photo_binary_data, photo_mime_type)
             if present, otherwise None.
     """
-    if not ENABLE_PHOTO_CACHE:
+    if not ENABLE_CACHE:
+        logger.debug("_get_from_cache: Cache is disabled.")
         return None
     cache_key = (provider, frozenset(overrides.items()))
+    logger.debug(f"Searching in cache for: {cache_key} using provider '{provider}', overrides: {overrides}")
     with cache_lock:
         return photo_cache.get(cache_key)
 
@@ -214,9 +185,11 @@ def _store_in_cache(provider: str, overrides: dict, value: tuple[bytes, str]):
         overrides (dict): Query parameter overrides used as cache key.
         value (tuple[bytes, str]): Tuple of (photo_binary_data, photo_mime_type).
     """
-    if not ENABLE_PHOTO_CACHE:
+    if not ENABLE_CACHE:
+        logger.debug("_store_in_cache: Cache is disabled.")
         return
     cache_key = (provider, frozenset(overrides.items()))
+    logger.debug(f"Storing in cache: {cache_key} using provider '{provider}', overrides: {overrides}")
     with cache_lock:
         photo_cache[cache_key] = value
 
